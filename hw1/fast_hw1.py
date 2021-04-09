@@ -5,7 +5,6 @@ import pandas as pd
 import re
 import xml.etree.ElementTree as ET
 
-import _pickle as pk
 from time import time
 from functools import reduce
 
@@ -53,6 +52,7 @@ class Dataset:
         self.num_docs = 0
         
         self.vocabs_dict = {}
+        self.black_list = []
         self.idf = np.zeros(0)
         self.t2d = None
         
@@ -94,10 +94,10 @@ class Dataset:
         i = 0
         row, col, data = [], [], []
         for t1, t2 in terms:
+            w = char[t1] + char[t2] if t2 > 0 else char[t1]
             for move, idx in enumerate(indices[i:]):
                 # Find the term
                 if all_term[idx][0] == t1 and all_term[idx][1] == t2:
-                    w = char[t1] + char[t2] if t2 > 0 else char[t1]
                     # Add the term to vocabs_dict
                     self.vocabs_dict[w] = len(self.vocabs_dict)
 
@@ -112,6 +112,7 @@ class Dataset:
                     
                 # The term doesn't exist in inverted-file
                 elif all_term[idx][0] > t1:
+                    self.black_list.append(w)
                     break
             i += move
             print('Processing ... %06.2f%%, total time: %06.2f sec.' % (100*(i+1)/len(indices), time() - self.start), end='\r')
@@ -136,6 +137,7 @@ if __name__ == '__main__':
     for _, query in enumerate(queries):
         print('Processing %02d / %02d, total time: %06.2f sec.' % (_+1, len(queries), time() - start), end='\r')
         uni, bi = query
+        bi = np.setdiff1d(bi, d.black_list).tolist()
         candidates = reduce(np.union1d, [d.t2d[d.vocabs_dict[x]].nonzero() for x in bi])
         
         query_terms = [d.vocabs_dict[x] for x in uni+bi]
@@ -143,5 +145,6 @@ if __name__ == '__main__':
         scores = BM25_score(d, query_terms, candidates)
         rank = np.argsort(scores)
         res = [candidates[i] for i in rank[-100:][::-1]]
-        result.append(get_result_list('%03d' % (_), d.filelist, res))
+        result.append(get_result_list('%03d' % (_+1), d.filelist, res))
     pd.DataFrame(result).to_csv('out.csv', header=['query_id','retrieved_docs'], index=False)
+    print('\nFinish, total time: %06.2f sec.' % (time() - start))
