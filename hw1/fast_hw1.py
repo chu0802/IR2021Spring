@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
 import numpy as np
 from scipy.sparse import csr_matrix
 
@@ -49,10 +43,6 @@ def BM25_score(d, terms, cand, k1=1.2, b=0.75):
 
 def get_result_list(q_id, filelist, res):
     return [q_id, ' '.join([open_file(filelist[i])[0].lower() for i in res])]
-
-
-# In[2]:
-
 
 class Dataset:
     def __init__(self):        
@@ -129,33 +119,29 @@ class Dataset:
         self.idf = np.array(self.idf)
         self.dump_time('\nFinish building dataset')
 
+if __name__ == '__main__':
+    start = time()
+    data_path = '/tmp2/r09922104/ir'
+    train_path = join(data_path, 'queries/query-train.xml')
+    test_path = join(data_path, 'queries/query-test.xml')
 
-# In[3]:
+    questions = read_query(train_path) + read_query(test_path)
+    queries = query_processing(questions)
+    corpus = reduce(np.union1d, [x+y for x, y in queries]).tolist()
 
+    d = Dataset()
+    d.build(corpus, data_path)
 
-data_path = '/tmp2/r09922104/ir'
-train_path = join(data_path, 'queries/query-train.xml')
-test_path = join(data_path, 'queries/query-test.xml')
-
-questions = read_query(train_path) + read_query(test_path)
-queries = query_processing(questions)
-result = []
-
-corpus = reduce(np.union1d, [x+y for x, y in queries]).tolist()
-
-d = Dataset()
-d.build(corpus, data_path)
-
-
-for _, query in enumerate(queries):
-    uni, bi = query
-    candidates = reduce(np.union1d, [d.t2d[d.vocabs_dict[x]].nonzero() for x in bi])
-    
-    query_terms = [d.vocabs_dict[x] for x in uni+bi]
-    
-    scores = BM25_score(d, query_terms, candidates)
-    rank = np.argsort(scores)
-    res = [candidates[i] for i in rank[-100:][::-1]]
-    result.append(get_result_list('%03d' % (_), d.filelist, res))
-pd.DataFrame(result).to_csv('out.csv', header=['query_id','retrieved_docs'], index=False)
-
+    result = []
+    for _, query in enumerate(queries):
+        print('Processing %02d / %02d, total time: %06.2f sec.' % (_+1, len(queries), time() - start), end='\r')
+        uni, bi = query
+        candidates = reduce(np.union1d, [d.t2d[d.vocabs_dict[x]].nonzero() for x in bi])
+        
+        query_terms = [d.vocabs_dict[x] for x in uni+bi]
+        
+        scores = BM25_score(d, query_terms, candidates)
+        rank = np.argsort(scores)
+        res = [candidates[i] for i in rank[-100:][::-1]]
+        result.append(get_result_list('%03d' % (_), d.filelist, res))
+    pd.DataFrame(result).to_csv('out.csv', header=['query_id','retrieved_docs'], index=False)
