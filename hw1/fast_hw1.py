@@ -5,6 +5,7 @@ import pandas as pd
 import re
 import xml.etree.ElementTree as ET
 
+import argparse
 from time import time
 from functools import reduce
 
@@ -41,10 +42,10 @@ def BM25_score(d, terms, cand, k1=1.2, b=0.75):
     return d.idf[terms].dot((tf*(k1 + 1))/(tf + k1*(1 - b + b*(d.docs_length[cand] / d.avg_length))))
 
 def get_result_list(q_id, filelist, res):
-    return [q_id, ' '.join([open_file(filelist[i])[0].lower() for i in res])]
+    return [q_id[-3:], ' '.join([open_file(filelist[i])[0].lower() for i in res])]
 
 class Dataset:
-    def __init__(self):        
+    def __init__(self, model_path, ntcir_path):        
         self.filelist = []
         
         self.docs_length = np.zeros(0)
@@ -57,10 +58,12 @@ class Dataset:
         self.t2d = None
         
         self.start = 0
+        self.model_path = model_path
+        self.ntcir_path = ntcir_path
         
-    def get_docs_length(self, path):
-        with open(join(path, 'model/file-list')) as f:
-            self.filelist = [join(path, 'CIRB010', s.strip()) for s in f.readlines()]
+    def get_docs_length(self):
+        with open(join(self.model_path, 'file-list')) as f:
+            self.filelist = [join(self.ntcir_path, s.strip()) for s in f.readlines()]
             for file_path in self.filelist:
                 tree = ET.parse(file_path)
                 text = ''.join([x.text.strip() for x in tree.findall('.//p')])
@@ -71,20 +74,21 @@ class Dataset:
     
     def dump_time(self, slogan):
         print(slogan+', total time: %06.2f sec.' % (time() - self.start))
-    def build(self, corpus, path):
+
+    def build(self, corpus):
         self.start = time()
-        self.get_docs_length(path)
+        self.get_docs_length()
         self.dump_time('Finish getting documents length')
         
         # Read inverted-file
-        all_term = pd.read_csv(join(path, 'model/inverted-file'), delimiter=' ', header=None, usecols=[0,1,2]).values
+        all_term = pd.read_csv(join(self.model_path, 'inverted-file'), delimiter=' ', header=None, usecols=[0,1,2]).values
         # Get the indices of lines with 3 digits
         indices = np.where(~np.isnan(all_term[:, 2]))[0]
         
         self.dump_time('Finish reading inverted file')
         
         # Read vocab.all
-        char = pd.read_csv(join(path, 'model/vocab.all'), header=None, index_col=False, delimiter='\n', quoting=3, encoding='utf-8').values.reshape(-1)
+        char = pd.read_csv(join(self.model_path, 'vocab.all'), header=None, index_col=False, delimiter='\n', quoting=3, encoding='utf-8').values.reshape(-1)
         char_dict = dict(zip(char, np.arange(len(char), dtype=int)))
         
         self.dump_time('Finish reading vocabulary file')
@@ -120,18 +124,30 @@ class Dataset:
         self.idf = np.array(self.idf)
         self.dump_time('\nFinish building dataset')
 
+def arguments_parsing():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-r', '--relevence', required=False, action='store_true', default=False,
+            help='Turn on the relevance feedback in the program')
+    parser.add_argument('-i', required=True, dest='query_file', 
+            help='The input query file')
+    parser.add_argument('-o', required=True, dest='output_file', 
+            help='The output ranked list file')
+    parser.add_argument('-m', required=True, dest='model_path', 
+            help='The input model directory')
+    parser.add_argument('-d', required=True, dest='nctir_path', 
+            help='The directory of NTCIR documents')
+    return parser.parse_args()
+
 if __name__ == '__main__':
     start = time()
-    data_path = '/tmp2/r09922104/ir'
-    train_path = join(data_path, 'queries/query-train.xml')
-    test_path = join(data_path, 'queries/query-test.xml')
+    args = arguments_parsing()
 
-    questions = read_query(train_path) + read_query(test_path)
+    questions = read_query(args.query_file)
     queries = query_processing(questions)
     corpus = reduce(np.union1d, [x+y for x, y in queries]).tolist()
 
-    d = Dataset()
-    d.build(corpus, data_path)
+    d = Dataset(args.model_path, args.nctir_path)
+    d.build(corpus)
 
     result = []
     for _, query in enumerate(queries):
@@ -145,6 +161,6 @@ if __name__ == '__main__':
         scores = BM25_score(d, query_terms, candidates)
         rank = np.argsort(scores)
         res = [candidates[i] for i in rank[-100:][::-1]]
-        result.append(get_result_list('%03d' % (_+1), d.filelist, res))
-    pd.DataFrame(result).to_csv('out.csv', header=['query_id','retrieved_docs'], index=False)
+        result.append(get_result_list(questions[_][0], d.filelist, res))
+    pd.DataFrame(result).to_csv(args.output_file, header=['query_id','retrieved_docs'], index=False)
     print('\nFinish, total time: %06.2f sec.' % (time() - start))
